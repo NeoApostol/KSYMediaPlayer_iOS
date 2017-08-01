@@ -10,14 +10,14 @@
 
 #define MIN_DELAY   10000
 
-
 @implementation KSYAVWriter{
     NSURL *filePath;
     AVAssetWriter *AVWriter;
     AVAssetWriterInput *videoWriterInput;
     AVAssetWriterInput *audioWriterInput;
-
-    KSYMediaInfo *ksyMediaInfo;
+    
+    NSDictionary *videoMeta;
+    NSDictionary *audioMeta;
     
     CFAbsoluteTime startTime;
     
@@ -80,18 +80,22 @@
     return ;
 }
 
-//设置medidaInfo
--(void)setMediaInfo:(KSYMediaInfo *)mediaInfo
+//设置meta
+-(void)setMeta:(NSDictionary *)meta type:(KSYAVWriterMetaType)type
 {
     if(status == KSYAVWriter_Status_Init)
-        ksyMediaInfo = mediaInfo;
+    {
+        if(KSYAVWriter_MetaType_Video == type)
+            videoMeta =  meta;
+        else if(KSYAVWriter_MetaType_Audio == type)
+            audioMeta = meta;
+    }
 }
 
 -(int)openVideoWriter
 {
-    if(ksyMediaInfo.videos.count > 0)
+    if(videoMeta)
     {
-        KSYVideoInfo  *videoInfo = [ksyMediaInfo.videos objectAtIndex:0];
         //要录制的mp4文件的配置
         NSDictionary *videoCompressionProps = [NSDictionary dictionaryWithObjectsAndKeys:
                                                [NSNumber numberWithDouble:_videoBitrate * 1000], AVVideoAverageBitRateKey,
@@ -99,8 +103,8 @@
         
         NSDictionary *videoSettings = [NSDictionary dictionaryWithObjectsAndKeys:
                                        AVVideoCodecH264, AVVideoCodecKey,
-                                       [NSNumber numberWithInt:videoInfo.frame_width], AVVideoWidthKey,
-                                       [NSNumber numberWithInt:videoInfo.frame_height], AVVideoHeightKey,
+                                       [videoMeta objectForKey:kKSYPLYVideoWidth], AVVideoWidthKey,
+                                       [videoMeta objectForKey:kKSYPLYVideoHeight], AVVideoHeightKey,
                                        videoCompressionProps, AVVideoCompressionPropertiesKey,
                                        nil];
         //视频输入源
@@ -110,35 +114,33 @@
         {
             [AVWriter addInput:videoWriterInput];
             videoQueue = dispatch_queue_create("com.ksyun.AVAssetWriter.processVideoQueue", DISPATCH_QUEUE_SERIAL);
+            return 0;
         }
-        else
-            return -1;
     }
-    return 0;
+    return -1;
 }
 
 -(int)openAudioWriter
 {
-    //添加音频输入源
     //音频设置
-    int audio_channels = 1;
-    AudioChannelLayout acl;
-    bzero( &acl, sizeof(acl));
-    acl.mChannelLayoutTag = kAudioChannelLayoutTag_Mono;
-    
-    if(ksyMediaInfo.audios.count > 0)
+    if(audioMeta)
     {
-        KSYAudioInfo  *audioInfo = [ksyMediaInfo.audios objectAtIndex:0];
-        if(audioInfo.channels == 2)
+        int audio_channels = 1;
+        AudioChannelLayout acl;
+        bzero( &acl, sizeof(acl));
+        acl.mChannelLayoutTag = kAudioChannelLayoutTag_Mono;
+        
+        int actual_audiochannels = (int)[audioMeta objectForKey:kKSYPLYAudioChannels];
+        if(actual_audiochannels == 2)
         {
             audio_channels = 2;
             acl.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo;
         }
-
+        
         NSDictionary *audioOutputSettings = [ NSDictionary dictionaryWithObjectsAndKeys:
                                              [ NSNumber numberWithInt: kAudioFormatMPEG4AAC ], AVFormatIDKey,
                                              [ NSNumber numberWithInt:_audioBitrate * 1000], AVEncoderBitRateKey,
-                                             [ NSNumber numberWithFloat:audioInfo.samplerate], AVSampleRateKey,
+                                             [audioMeta objectForKey:kKSYPLYAudioSampleRate], AVSampleRateKey,
                                              [ NSNumber numberWithInt: audio_channels], AVNumberOfChannelsKey,
                                              [ NSData dataWithBytes: &acl length: sizeof( acl ) ], AVChannelLayoutKey,
                                              nil ];
@@ -151,12 +153,11 @@
             //添加input
             [AVWriter addInput:audioWriterInput];
             audioQueue = dispatch_queue_create("com.ksyun.AVAssetWriter.processAudioQueue", DISPATCH_QUEUE_SERIAL);
+            return 0;
         }
-        else
-            return -1;
     }
     
-    return 0;
+    return -1;
 }
 
 //开始记录
@@ -182,7 +183,6 @@
         ret = [self openVideoWriter];
     
     ret |= [self openAudioWriter];
-    
     if(ret != 0)
         return ;
     
